@@ -50,8 +50,7 @@ app.post('/ussd', (req, res) => {
 
 
 
-// BMI App with Neon DB
-const { Pool } = require('pg');
+// BMI App with Neon DB;
 const pool = new Pool({
     connectionString: 'postgresql://bmi_owner:npg_WA2l7PwsxLNg@ep-broad-surf-a8d6tuvn-pooler.eastus2.azure.neon.tech/bmi?sslmode=require',
     ssl: { rejectUnauthorized: false }
