@@ -47,9 +47,11 @@ app.post('/ussd', (req, res) => {
     res.send(response);
 });
 
-// /ussd2: BMI Calculator App
-// This app calculates BMI and provides health tips based on user input.
-//  Neon connection string
+
+
+
+// BMI App with Neon DB
+const { Pool } = require('pg');
 const pool = new Pool({
     connectionString: 'postgresql://bmi_owner:npg_WA2l7PwsxLNg@ep-broad-surf-a8d6tuvn-pooler.eastus2.azure.neon.tech/bmi?sslmode=require',
     ssl: { rejectUnauthorized: false }
@@ -62,114 +64,90 @@ app.post('/ussd2', async (req, res) => {
     const step = levels.length;
 
     try {
-        // Step 0: Language Selection
         if (text === '') {
-            response = `CON Welcome! / Murakaza neza!\n1. English\n2. Kinyarwanda`;
-        }
+            const prev = await pool.query(`
+                SELECT bmi, status, age, weight, height, created_at
+                FROM bmi_records
+                WHERE session_id IN (
+                    SELECT session_id FROM sessions WHERE phone_number = $1
+                )
+                ORDER BY created_at DESC LIMIT 1
+            `, [phoneNumber]);
 
-        // English Flow
-        else if (levels[0] === '1') {
+            if (prev.rows.length > 0) {
+                response = `CON Welcome back!\n1. New BMI Check\n2. View Last BMI`;
+            } else {
+                response = `CON Welcome! / Murakaza neza!\n1. English\n2. Kinyarwanda`;
+            }
+        } else if (text === '2') {
+            const last = await pool.query(`
+                SELECT bmi, status, age, weight, height, created_at
+                FROM bmi_records
+                WHERE session_id IN (
+                    SELECT session_id FROM sessions WHERE phone_number = $1
+                )
+                ORDER BY created_at DESC LIMIT 1
+            `, [phoneNumber]);
+
+            if (last.rows.length > 0) {
+                const r = last.rows[0];
+                response = `END Last BMI:\nBMI: ${r.bmi.toFixed(1)}\nStatus: ${r.status}\nWeight: ${r.weight}kg\nHeight: ${r.height}cm\nAge: ${r.age}\nDate: ${new Date(r.created_at).toLocaleDateString()}`;
+            } else {
+                response = `END No previous BMI record found.`;
+            }
+        } else if (levels[0] === '1' || levels[0] === '2') {
+            const lang = levels[0] === '1' ? 'English' : 'Kinyarwanda';
             switch (step) {
                 case 1:
-                    response = `CON Enter your weight in KG:\n0. Back`; break;
+                    response = lang === 'English' ? `CON Enter your weight in KG:\n0. Back` : `CON Andika ibiro byawe (KG):\n0. Gusubira inyuma`; break;
                 case 2:
-                    response = `CON Enter your age:\n0. Back`; break;
+                    response = lang === 'English' ? `CON Enter your age:\n0. Back` : `CON Andika imyaka yawe:\n0. Gusubira inyuma`; break;
                 case 3:
-                    response = `CON Enter your height in CM:\n0. Back`; break;
+                    response = lang === 'English' ? `CON Enter your height in CM:\n0. Back` : `CON Andika uburebure bwawe (CM):\n0. Gusubira inyuma`; break;
                 case 4:
-                    // parse values
                     const weight = parseFloat(levels[1]);
                     const age = parseInt(levels[2]);
                     const height = parseFloat(levels[3]);
                     if (isNaN(weight) || isNaN(age) || isNaN(height)) {
-                        response = `END Invalid input. Please enter valid numbers.`; break;
+                        response = lang === 'English' ? `END Invalid input.` : `END Ibipimo si byo.`; break;
                     }
 
                     const bmi = weight / ((height / 100) ** 2);
                     let status = '';
-                    if (bmi < 18.5) status = 'Underweight';
-                    else if (bmi < 25) status = 'Normal';
-                    else if (bmi < 30) status = 'Overweight';
-                    else status = 'Obese';
-
-                    // Insert session and BMI record
-                    await pool.query(`
-                INSERT INTO sessions (session_id, phone_number, service_code, language)
-                VALUES ($1, $2, $3, 'English')
-                ON CONFLICT (session_id) DO NOTHING
-              `, [sessionId, phoneNumber, serviceCode]);
+                    if (bmi < 18.5) status = lang === 'English' ? 'Underweight' : 'Ufite umubyibuho muke';
+                    else if (bmi < 25) status = lang === 'English' ? 'Normal' : 'Uri muzima';
+                    else if (bmi < 30) status = lang === 'English' ? 'Overweight' : 'Ufite ibiro byinshi';
+                    else status = lang === 'English' ? 'Obese' : 'Ufite umubyibuho ukabije';
 
                     await pool.query(`
-                INSERT INTO bmi_records (session_id, weight, height, age, bmi, status)
-                VALUES ($1, $2, $3, $4, $5, $6)
-              `, [sessionId, weight, height, age, bmi, status]);
+                        INSERT INTO sessions (session_id, phone_number, service_code, language)
+                        VALUES ($1, $2, $3, $4)
+                        ON CONFLICT (session_id) DO NOTHING
+                    `, [sessionId, phoneNumber, serviceCode, lang]);
 
-                    response = `CON Your BMI is ${bmi.toFixed(1)}.\nYou are ${status}.\nWant health tips?\n1. Yes\n2. No\n0. Back`;
+                    await pool.query(`
+                        INSERT INTO bmi_records (session_id, weight, height, age, bmi, status)
+                        VALUES ($1, $2, $3, $4, $5, $6)
+                    `, [sessionId, weight, height, age, bmi, status]);
+
+                    response = lang === 'English'
+                        ? `CON Your BMI is ${bmi.toFixed(1)}.\nYou are ${status}.\nWant health tips?\n1. Yes\n2. No\n0. Back`
+                        : `CON BMI yawe ni ${bmi.toFixed(1)}.\n${status}.\nWifuza inama z’ubuzima?\n1. Yego\n2. Oya\n0. Gusubira inyuma`;
                     break;
                 case 5:
                     if (levels[4] === '1') {
                         await pool.query(`UPDATE bmi_records SET tips_requested = true WHERE session_id = $1`, [sessionId]);
-                        response = `END Health Tip:\nDrink water, avoid junk food, and exercise.`;
+                        response = lang === 'English'
+                            ? `END Health Tip:\nDrink water, avoid junk food, and exercise.`
+                            : `END Inama:\nKunywa amazi, wirinde junk food, ujye ukora imyitozo.`;
                     } else if (levels[4] === '2') {
-                        response = `END Thank you! Stay healthy.`;
+                        response = lang === 'English' ? `END Thank you! Stay healthy.` : `END Murakoze! Mugire ubuzima bwiza.`;
                     } else {
-                        response = `END Invalid option.`;
+                        response = lang === 'English' ? `END Invalid option.` : `END Igisubizo si cyo.`;
                     }
                     break;
                 default:
-                    response = `END Invalid input.`;
-            }
-        }
-
-        // Kinyarwanda Flow (same logic, translated prompts)
-        else if (levels[0] === '2') {
-            switch (step) {
-                case 1:
-                    response = `CON Andika ibiro byawe (KG):\n0. Gusubira inyuma`; break;
-                case 2:
-                    response = `CON Andika imyaka yawe:\n0. Gusubira inyuma`; break;
-                case 3:
-                    response = `CON Andika uburebure bwawe (CM):\n0. Gusubira inyuma`; break;
-                case 4:
-                    const ibiro = parseFloat(levels[1]);
-                    const imyaka = parseInt(levels[2]);
-                    const uburebure = parseFloat(levels[3]);
-                    if (isNaN(ibiro) || isNaN(imyaka) || isNaN(uburebure)) {
-                        response = `END Ibipimo si byo. Andika imibare nyayo.`; break;
-                    }
-
-                    const bmiKin = ibiro / ((uburebure / 100) ** 2);
-                    let statusKin = '';
-                    if (bmiKin < 18.5) statusKin = 'Ufite umubyibuho muke';
-                    else if (bmiKin < 25) statusKin = 'Uri muzima';
-                    else if (bmiKin < 30) statusKin = 'Ufite ibiro byinshi';
-                    else statusKin = 'Ufite umubyibuho ukabije';
-
-                    await pool.query(`
-                INSERT INTO sessions (session_id, phone_number, service_code, language)
-                VALUES ($1, $2, $3, 'Kinyarwanda')
-                ON CONFLICT (session_id) DO NOTHING
-              `, [sessionId, phoneNumber, serviceCode]);
-
-                    await pool.query(`
-                INSERT INTO bmi_records (session_id, weight, height, age, bmi, status)
-                VALUES ($1, $2, $3, $4, $5, $6)
-              `, [sessionId, ibiro, uburebure, imyaka, bmiKin, statusKin]);
-
-                    response = `CON BMI yawe ni ${bmiKin.toFixed(1)}.\n${statusKin}.\nWifuza inama z’ubuzima?\n1. Yego\n2. Oya\n0. Gusubira inyuma`;
-                    break;
-                case 5:
-                    if (levels[4] === '1') {
-                        await pool.query(`UPDATE bmi_records SET tips_requested = true WHERE session_id = $1`, [sessionId]);
-                        response = `END Inama:\nKunywa amazi, wirinde junk food, ujye ukora imyitozo.`;
-                    } else if (levels[4] === '2') {
-                        response = `END Murakoze! Mugire ubuzima bwiza.`;
-                    } else {
-                        response = `END Igisubizo si cyo.`;
-                    }
-                    break;
-                default:
-                    response = `END Igisubizo si cyo.`;
+                    response = lang === 'English' ? `END Invalid input.` : `END Igisubizo si cyo.`;
             }
         } else {
             response = `END Invalid option.`;
@@ -177,12 +155,12 @@ app.post('/ussd2', async (req, res) => {
 
         res.set('Content-Type', 'text/plain');
         res.send(response);
-
     } catch (err) {
         console.error(err);
         res.status(500).send('END Internal error');
     }
 });
+
 
 
 // Start server
