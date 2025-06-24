@@ -10,7 +10,7 @@ app.post('/ussd2', (req, res) => {
         let { sessionId, serviceCode, phoneNumber, text } = req.body || {};
         let response = '';
 
-        const textArray = text.split('*0');
+        const textArray = text.split('*');
 
         const step = textArray.length;
 
