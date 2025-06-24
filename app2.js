@@ -5,7 +5,7 @@ const app = express();
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: false }));
 
-app.post('/ussd', (req, res) => {
+app.post('/ussd2', (req, res) => {
     try {
         let { sessionId, serviceCode, phoneNumber, text } = req.body || {};
         let response = '';
